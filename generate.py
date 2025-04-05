@@ -245,17 +245,38 @@ def save_output(content: str, output_path: str):
 
 # --- Main Execution ---
 def main():
-    parser = argparse.ArgumentParser(description="Convert Oozie XML workflow to Databricks Workflow YAML using LLM chaining.")
-    parser.add_argument("xml_file", help="Path to the input Oozie workflow XML file.")
-    parser.add_argument("-o", "--output", help="Optional: Path to save the output YAML file.")
+    """Main execution flow."""
+    # Check for API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    # --- Main Execution Flow ---
+    if not api_key:
+        logging.error("ANTHROPIC_API_KEY environment variable not set.")
+        return
+
+    # FR1: Argument Parsing
+    parser = argparse.ArgumentParser(description='Convert Oozie XML workflow to Databricks YAML.')
+    parser.add_argument('input_xml', help='Path to the input Oozie XML file.')
+    parser.add_argument('-o', '--output', help='Path to save the output Databricks YAML file.')
     args = parser.parse_args()
 
-    input_xml_path = args.xml_file
-    # Determine output path (FR3.1)
+    # Determine input/output paths
+    input_xml_path = args.input_xml
+    
+    # Verify the input file exists
+    if not os.path.exists(input_xml_path):
+        logging.error(f"Input XML file not found: {input_xml_path}")
+        print(f"Error: Input XML file not found: {input_xml_path}")
+        return
+
+    # Determine output file path
     if args.output:
         output_yaml_path = args.output
     else:
-        output_yaml_path = os.path.splitext(input_xml_path)[0] + ".yml"
+        # Generate output in the same directory as the input file
+        input_dir = os.path.dirname(input_xml_path)
+        base_name = os.path.splitext(os.path.basename(input_xml_path))[0]
+        output_yaml_path = os.path.join(input_dir, f"{base_name}.yml")
 
     logging.info(f"Starting conversion for: {input_xml_path}")
     logging.info(f"Output YAML will be saved to: {output_yaml_path}")

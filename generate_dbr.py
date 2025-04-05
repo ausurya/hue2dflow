@@ -279,6 +279,8 @@ def main():
 
     # Determine input/output paths
     input_xml_path = args.input_xml
+    
+    # Verify the input file exists
     if not os.path.exists(input_xml_path):
         logging.error(f"Input XML file not found: {input_xml_path}")
         print(f"Error: Input XML file not found: {input_xml_path}")
@@ -288,8 +290,10 @@ def main():
     if args.output:
         output_yaml_path = args.output
     else:
+        # Generate output in the same directory as the input file
+        input_dir = os.path.dirname(input_xml_path)
         base_name = os.path.splitext(os.path.basename(input_xml_path))[0]
-        output_yaml_path = f"{base_name}.yml"
+        output_yaml_path = os.path.join(input_dir, f"{base_name}.yml")
 
     logging.info(f"Starting conversion for: {input_xml_path}")
     logging.info(f"Output YAML will be saved to: {output_yaml_path}")

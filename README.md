@@ -14,6 +14,19 @@ This tool uses a multi-prompt LLM chain (Anthropic Claude) to convert Apache Ooz
 *   Includes basic YAML validation and retry logic.
 *   Logs the conversion process and validation feedback.
 
+## Directory Structure
+
+* `examples/` - Contains example Oozie workflow XML files and their corresponding YAML outputs
+  * `sample-workflow.xml` - Simple workflow with basic actions
+  * `sample-workflow.yml` - Generated Databricks workflow from sample XML
+  * `complex-workflow.xml` - Workflow with decision nodes and fork/join patterns
+  * `complex-workflow.yml` - Generated Databricks workflow from complex XML
+  * `advanced-workflow.xml` - Complex workflow with multiple decision nodes, fork/join patterns, and diverse action types
+  * `advanced-workflow.yml` - Generated Databricks workflow from advanced XML
+
+* `generate.py` - Main conversion script using Anthropic API directly
+* `generate_dbr.py` - Conversion script using Databricks model serving endpoints
+
 ## Setup
 
 1.  **Clone the repository (or download the files):**
@@ -35,44 +48,57 @@ This tool uses a multi-prompt LLM chain (Anthropic Claude) to convert Apache Ooz
     pip install -r requirements.txt
     ```
 
-4.  **Set Anthropic API Key:**
-    The script requires access to the Anthropic Claude API. Set your API key as an environment variable:
+4.  **Set API Keys:**
+    
+    For `generate.py` (using Anthropic API directly):
     ```bash
     export ANTHROPIC_API_KEY='your_api_key_here'
     ```
-    *⚠️ **Security Note:** Do not hardcode your API key directly in the script. Use environment variables or a secure secrets management solution.*
+    
+    For `generate_dbr.py` (using Databricks model serving):
+    ```bash
+    export DATABRICKS_HOST='https://your-databricks-instance.cloud.databricks.com'
+    export DATABRICKS_TOKEN='your-databricks-token'
+    export MODEL_ENDPOINT_NAME='your-claude-model-endpoint-name'
+    ```
+    
+    *⚠️ **Security Note:** Do not hardcode your API keys directly in the script. Use environment variables or a secure secrets management solution.*
 
 ## Usage
 
-Run the script from your terminal, providing the path to the Oozie XML file:
+### Using Anthropic API directly:
 
 ```bash
-python generate.py path/to/your/workflow.xml
+# Convert a workflow XML file
+python generate.py examples/sample-workflow.xml
+
+# Specify output file path
+python generate.py examples/sample-workflow.xml -o custom_output.yml
 ```
 
-**Example:**
+### Using Databricks model serving:
 
 ```bash
-python generate.py sample-workflow.xml
+# Convert a workflow XML file
+python generate_dbr.py examples/sample-workflow.xml
+
+# Specify output file path
+python generate_dbr.py examples/sample-workflow.xml -o custom_output.yml
 ```
-
-**Options:**
-
-*   `-o` or `--output`: Specify a custom path for the output YAML file. If omitted, the output file will be saved in the same directory as the input XML with a `.yml` extension (e.g., `workflow.xml` -> `workflow.yml`).
-
-    ```bash
-    python generate.py sample-workflow.xml -o output/databricks-workflow.yaml
-    ```
 
 ## Output
 
-*   **YAML File:** The generated Databricks Workflow YAML (e.g., `sample-workflow.yml`).
-*   **Validation Log:** A text file containing the LLM's validation feedback (e.g., `sample-workflow_validation.log`).
-*   **Conversion Log:** A detailed log of the conversion process (`conversion.log`).
+The script generates:
+1. A YAML file with the Databricks workflow definition (in the same directory as the input XML file)
+2. A validation log file with feedback on the conversion (in the same directory as the input XML file)
+3. A detailed conversion log file (`conversion.log`) in the current directory
 
-## Limitations
+For example, if you run:
+```bash
+python generate.py examples/sample-workflow.xml
+```
 
-*   **LLM Dependency:** The quality of the conversion heavily depends on the LLM's ability to understand the Oozie XML and generate accurate Databricks YAML. Complex Oozie features (sub-workflows, complex decision logic, forks/joins, Hadoop actions beyond basic Shell/Spark/Hive) might not be converted correctly without significant prompt engineering or additional parsing logic.
-*   **No Deployment:** This tool only generates the YAML definition; it does not interact with the Databricks API to deploy the workflow.
-*   **Error Handling:** While basic retry and validation are included, complex errors or highly malformed XML might cause failures.
-*   **Default Cluster:** Uses hardcoded default cluster settings. Modify `generate.py` if different defaults are needed.
+The following files will be generated:
+- `examples/sample-workflow.yml` - The Databricks workflow YAML
+- `examples/sample-workflow_validation.log` - Validation feedback
+- `conversion.log` - Detailed conversion logs
