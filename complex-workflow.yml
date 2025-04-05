@@ -1,0 +1,120 @@
+name: Data-Processing-Workflow
+
+job_clusters:
+  - job_cluster_key: default_cluster
+    new_cluster:
+      spark_version: 13.3.x-scala2.12
+      node_type_id: i3.xlarge
+      num_workers: 2
+
+tasks:
+  - task_key: prepare-data
+    description: Prepares initial data for processing
+    shell_command_task:
+      command: "${wfPath}/scripts/setup.sh ${inputDir} ${tempDir}"
+    job_cluster_key: default_cluster
+    depends_on: []
+    timeout_seconds: 3600
+    on_error:
+      task_key: fail
+
+  - task_key: check-prep-output
+    description: Checks the output status and routes based on data type
+    notebook_task:
+      notebook_path: "/Workflows/check_prep_output"
+      base_parameters:
+        tempDir: "${tempDir}"
+        outputVariable: "status"
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: prepare-data
+    timeout_seconds: 1800
+    on_error:
+      task_key: fail
+
+  - task_key: parallel-tasks
+    description: Fork point for parallel heavy processing paths
+    notebook_task:
+      notebook_path: "/Workflows/fork_parallel"
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: check-prep-output
+        condition: "{{tasks.check-prep-output.result.status}} == 'HEAVY'"
+    timeout_seconds: 600
+    on_error:
+      task_key: fail
+
+  - task_key: spark-process-heavy
+    description: Processes heavy data using Spark
+    spark_jar_task:
+      main_class_name: com.example.HeavyProcessor
+      jar_uri: "${wfPath}/lib/heavy-spark.jar"
+      parameters: ["${tempDir}", "${outputDirHeavy}"]
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: parallel-tasks
+    timeout_seconds: 7200
+    on_error:
+      task_key: fail
+
+  - task_key: shell-log-status
+    description: Logs the heavy processing status
+    shell_command_task:
+      command: "${wfPath}/scripts/log.sh HEAVY_PROCESSING_STARTED"
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: parallel-tasks
+    timeout_seconds: 1200
+    on_error:
+      task_key: fail
+
+  - task_key: wait-for-parallel
+    description: Join point for parallel processing paths
+    notebook_task:
+      notebook_path: "/Workflows/join_parallel"
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: spark-process-heavy
+      - task_key: shell-log-status
+    timeout_seconds: 600
+    on_error:
+      task_key: fail
+
+  - task_key: spark-process-light
+    description: Processes light data using Spark
+    spark_jar_task:
+      main_class_name: com.example.LightProcessor
+      jar_uri: "${wfPath}/lib/light-spark.jar"
+      parameters: ["${tempDir}", "${outputDirLight}"]
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: check-prep-output
+        condition: "{{tasks.check-prep-output.result.status}} == 'LIGHT'"
+    timeout_seconds: 3600
+    on_error:
+      task_key: fail
+
+  - task_key: end
+    description: End of workflow - successful completion
+    notebook_task:
+      notebook_path: "/Workflows/workflow_end"
+      base_parameters:
+        status: "SUCCESS"
+    job_cluster_key: default_cluster
+    depends_on:
+      - task_key: wait-for-parallel
+      - task_key: spark-process-light
+    timeout_seconds: 600
+
+  - task_key: fail
+    description: Error handling task for workflow failures
+    notebook_task:
+      notebook_path: "/Workflows/handle_failure"
+      base_parameters:
+        message: "Shows last error node and message"
+    job_cluster_key: default_cluster
+    email_notifications:
+      on_failure:
+        - admin@example.com
+      on_start:
+        - admin@example.com

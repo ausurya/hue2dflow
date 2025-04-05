@@ -1,0 +1,86 @@
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="complex-decision-fork-wf">
+
+    <global>
+        <job-tracker>${jobTracker}</job-tracker>
+        <name-node>${nameNode}</name-node>
+        <configuration>
+            <property>
+                <name>mapred.job.queue.name</name>
+                <value>${queueName}</value>
+            </property>
+        </configuration>
+    </global>
+
+    <start to="prepare-data"/>
+
+    <action name="prepare-data">
+        <shell xmlns="uri:oozie:shell-action:0.1">
+            <exec>setup.sh</exec>
+            <argument>${inputDir}</argument>
+            <argument>${tempDir}</argument>
+            <file>${wfPath}/scripts/setup.sh#setup.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="check-prep-output"/>
+        <error to="fail"/>
+    </action>
+
+    <decision name="check-prep-output">
+        <switch>
+            <case to="parallel-tasks">${wf:actionData('prepare-data')['status'] == 'HEAVY'}</case>
+            <default to="spark-process-light"/>
+        </switch>
+    </decision>
+
+    <fork name="parallel-tasks">
+        <path start="spark-process-heavy"/>
+        <path start="shell-log-status"/>
+    </fork>
+
+    <action name="spark-process-heavy">
+        <spark xmlns="uri:oozie:spark-action:0.1">
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>HeavySparkProcessing</name>
+            <class>com.example.HeavyProcessor</class>
+            <jar>${wfPath}/lib/heavy-spark.jar</jar>
+            <arg>${tempDir}</arg>
+            <arg>${outputDirHeavy}</arg>
+        </spark>
+        <ok to="wait-for-parallel"/>
+        <error to="fail"/>
+    </action>
+
+    <action name="shell-log-status">
+        <shell xmlns="uri:oozie:shell-action:0.1">
+            <exec>log.sh</exec>
+            <argument>HEAVY_PROCESSING_STARTED</argument>
+            <file>${wfPath}/scripts/log.sh#log.sh</file>
+        </shell>
+        <ok to="wait-for-parallel"/>
+        <error to="fail"/>
+    </action>
+
+    <join name="wait-for-parallel" to="end"/>
+
+    <action name="spark-process-light">
+        <spark xmlns="uri:oozie:spark-action:0.1">
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>LightSparkProcessing</name>
+            <class>com.example.LightProcessor</class>
+            <jar>${wfPath}/lib/light-spark.jar</jar>
+            <arg>${tempDir}</arg>
+            <arg>${outputDirLight}</arg>
+        </spark>
+        <ok to="end"/>
+        <error to="fail"/>
+    </action>
+
+    <kill name="fail">
+        <message>Workflow failed at node [${wf:lastErrorNode()}], error message [${wf:errorMessage(wf:lastErrorNode())}]</message>
+    </kill>
+
+    <end name="end"/>
+
+</workflow-app>

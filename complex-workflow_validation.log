@@ -1,0 +1,83 @@
+# Review of Databricks Workflow YAML Against Original Workflow Summary
+
+## Overall Assessment
+
+The Databricks workflow YAML generally captures the main components of the original Oozie workflow, but there are several structural issues and discrepancies that need to be addressed to ensure accurate control flow and execution logic.
+
+## 1. CONTROL FLOW ACCURACY
+
+### Issues Found:
+
+1. **Decision Node Implementation**:
+   - The decision node `check-prep-output` is implemented as a notebook task in Databricks, which is appropriate, but the original summary indicates it should check if output status is 'HEAVY'. The YAML does handle branching for both 'HEAVY' and 'LIGHT' values correctly, but lacks clarity on what happens for other potential values.
+
+2. **Fork/Join Pattern**:
+   - The fork/join pattern is implemented using `parallel-tasks` and `wait-for-parallel`, which is conceptually correct. However, the original workflow seems to use these as explicit control-flow nodes, while the YAML implements them as actual tasks.
+
+3. **End Task Logic**:
+   - The `end` task in the YAML is correctly implemented to depend on both possible execution paths, but shouldn't be a separate task according to the original summary - it was described as the workflow end point, not a task.
+
+## 2. COMPLETENESS
+
+### Issues Found:
+
+1. **Missing Logic**:
+   - The YAML doesn't specify what happens if `check-prep-output` returns something other than 'HEAVY' or 'LIGHT'. The original workflow summary doesn't explicitly mention this case either, but a robust implementation should account for unexpected values.
+
+2. **Parameter Handling**:
+   - The `check-prep-output` task should produce an output variable called "status" which is then used for decision-making. This is present in the YAML.
+   - However, the original summary mentions that the `prepare-data` action "captures output for later use", which isn't clearly reflected in the YAML.
+
+## 3. CONDITIONAL LOGIC
+
+### Issues Found:
+
+1. **Decision Conditions**:
+   - The conditions for branching after `check-prep-output` are correctly implemented using the `condition` property in the `depends_on` section.
+   - However, there's no explicit path for when the status is neither 'HEAVY' nor 'LIGHT'.
+
+## 4. SPECIFIC ISSUES TO CHECK
+
+### Issues Found:
+
+1. **Workflow Name**:
+   - The original summary doesn't specify a workflow name, so "Data-Processing-Workflow" is acceptable.
+
+2. **Error Handling**:
+   - The `fail` task is implemented as directed, but the email notifications in the YAML weren't specified in the original summary. They are a good addition but should be confirmed.
+
+3. **End Conditions**:
+   - The `end` task depends on both `wait-for-parallel` and `spark-process-light`, which is correct logic but implemented as a specific task rather than a workflow end state.
+
+## Actionable Recommendations
+
+1. **Clarify Control Flow Nodes vs. Tasks**:
+   - Consider renaming `parallel-tasks` to something like `begin-parallel-processing` to clarify its role as the starting point for parallel execution.
+   - Similarly, `wait-for-parallel` could be renamed to `complete-parallel-processing` for clarity.
+
+2. **Add Error Path for Unexpected Values**:
+   - Add a default path in case `check-prep-output` returns something other than 'HEAVY' or 'LIGHT'.
+   ```yaml
+   - task_key: handle-unknown-data-type
+     description: Handles unexpected data type values
+     notebook_task:
+       notebook_path: "/Workflows/handle_unknown_data_type"
+     job_cluster_key: default_cluster
+     depends_on:
+       - task_key: check-prep-output
+         condition: "{{tasks.check-prep-output.result.status}} != 'HEAVY' && {{tasks.check-prep-output.result.status}} != 'LIGHT'"
+     timeout_seconds: 1800
+     on_error:
+       task_key: fail
+   ```
+
+3. **Confirm Email Notifications**:
+   - Verify that the email notifications in the `fail` task are required, as they weren't mentioned in the original summary.
+
+4. **Add Output Capture from prepare-data**:
+   - Ensure the `prepare-data` task captures output that can be used later as mentioned in the original summary. This might require additional parameters or notebook integration.
+
+5. **Simplify End Task**:
+   - Consider whether the `end` task is necessary or if the workflow should simply complete after the final processing tasks.
+
+These changes will ensure that the Databricks workflow more accurately reflects the control flow and logic of the original Oozie workflow while maintaining proper error handling and execution paths.

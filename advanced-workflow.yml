@@ -1,0 +1,218 @@
+name: "advanced-data-processing-wf"
+format_version: 1.0.0
+tasks:
+  - task_key: "data-validation"
+    description: "Validates the input data quality"
+    spark_jar_task:
+      main_class_name: "com.example.DataValidator"
+      parameters:
+        - "--input-path"
+        - "{{input_path}}"
+        - "--validation-output-path"
+        - "{{validation_output_path}}"
+    job_cluster_key: "default_cluster"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "check-validation-result"
+    description: "Checks the validation result and determines next step"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/check_validation_result"
+      base_parameters:
+        validation_output_path: "{{validation_output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "data-validation"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "data-preparation"
+    description: "Prepares the data for processing"
+    shell_command_task:
+      command: "./prepare_data.sh --input-path '{{input_path}}' --output-path '{{prepared_output_path}}'"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-validation-result"
+        condition: "{{task.check-validation-result.result == 'VALID'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "data-cleansing"
+    description: "Cleanses invalid data"
+    spark_jar_task:
+      main_class_name: "com.example.DataCleaner"
+      parameters:
+        - "--input-path"
+        - "{{input_path}}"
+        - "--output-path"
+        - "{{cleansed_output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-validation-result"
+        condition: "{{task.check-validation-result.result == 'INVALID'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "check-processing-mode"
+    description: "Determines whether to use parallel or sequential processing"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/check_processing_mode"
+      base_parameters:
+        processing_mode: "{{processing_mode}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "data-preparation"
+      - task_key: "data-cleansing"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "feature-extraction"
+    description: "Extracts features from the prepared data"
+    spark_jar_task:
+      main_class_name: "com.example.FeatureExtractor"
+      parameters:
+        - "--input-path"
+        - "{{prepared_output_path}}"
+        - "--output-path"
+        - "{{features_output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-processing-mode"
+        condition: "{{task.check-processing-mode.result == 'standard'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "metadata-generation"
+    description: "Generates metadata for the prepared data"
+    shell_command_task:
+      command: "./generate_metadata.sh --input-path '{{prepared_output_path}}' --output-path '{{metadata_output_path}}'"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-processing-mode"
+        condition: "{{task.check-processing-mode.result == 'standard'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "data-profiling"
+    description: "Profiles the prepared data using Hive"
+    sql_task:
+      query: "SELECT * FROM TABLE(DIRECTORY('{{prepared_output_path}}')) INTO TABLE(DIRECTORY('{{profile_output_path}}'))"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-processing-mode"
+        condition: "{{task.check-processing-mode.result == 'standard'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "parallel-join"
+    description: "Join point for parallel processing paths"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/parallel_join"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "feature-extraction"
+      - task_key: "metadata-generation"
+      - task_key: "data-profiling"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "sequential-processing"
+    description: "Sequential processing of data using a sub-workflow"
+    pipeline_task:
+      pipeline_id: "{{sequential_workflow_id}}"
+      parameters:
+        input_path: "{{prepared_output_path}}"
+        output_path: "{{sequential_output_path}}"
+    depends_on:
+      - task_key: "check-processing-mode"
+        condition: "{{task.check-processing-mode.result == 'safe'}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "check-results"
+    description: "Checks if output files exist"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/check_results"
+      base_parameters:
+        output_path: "{{output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "parallel-join"
+      - task_key: "sequential-processing"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "final-processing"
+    description: "Performs final processing on the data"
+    spark_jar_task:
+      main_class_name: "com.example.FinalProcessor"
+      parameters:
+        - "--input-path"
+        - "{{output_path}}"
+        - "--output-path"
+        - "{{final_output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "check-results"
+        condition: "{{task.check-results.result == true}}"
+    on_failure:
+      task_key: "send-error-email"
+
+  - task_key: "send-success-email"
+    description: "Sends success notification email"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/send_email"
+      base_parameters:
+        email_type: "success"
+        email_address: "{{success_email_address}}"
+        workflow_name: "advanced-data-processing-wf"
+        paths: "{{final_output_path}}"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "final-processing"
+    libraries:
+      - pypi:
+          package: "databricks-email"
+    on_failure:
+      task_key: "end"
+
+  - task_key: "send-error-email"
+    description: "Sends error notification email"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/send_email"
+      base_parameters:
+        email_type: "error"
+        email_address: "{{error_email_address}}"
+        workflow_name: "advanced-data-processing-wf"
+        error_details: "{{error_details}}"
+    job_cluster_key: "default_cluster"
+    libraries:
+      - pypi:
+          package: "databricks-email"
+    on_success:
+      task_key: "kill"
+    on_failure:
+      task_key: "kill"
+
+  - task_key: "kill"
+    description: "Terminates the workflow with failure"
+    shell_command_task:
+      command: "exit 1"
+    job_cluster_key: "default_cluster"
+
+  - task_key: "end"
+    description: "Successfully terminates the workflow"
+    notebook_task:
+      notebook_path: "/Shared/Workflows/terminate_workflow"
+      base_parameters:
+        status: "SUCCESS"
+    job_cluster_key: "default_cluster"
+    depends_on:
+      - task_key: "send-success-email"
+
+job_clusters:
+  - job_cluster_key: "default_cluster"
+    new_cluster:
+      spark_version: "13.3.x-scala2.12"
+      node_type_id: "i3.xlarge"
+      num_workers: 2

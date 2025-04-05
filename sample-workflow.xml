@@ -1,0 +1,50 @@
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="sample-java-wf">
+    <start to="shell-prep"/>
+
+    <action name="shell-prep">
+        <shell xmlns="uri:oozie:shell-action:0.1">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <configuration>
+                <property>
+                    <name>mapred.job.queue.name</name>
+                    <value>${queueName}</value>
+                </property>
+            </configuration>
+            <exec>prepare_data.sh</exec>
+            <argument>${outputDir}/prep</argument>
+            <file>${wfPath}/prepare_data.sh#prepare_data.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="spark-process"/>
+        <error to="fail"/>
+    </action>
+
+    <action name="spark-process">
+        <spark xmlns="uri:oozie:spark-action:0.1">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <configuration>
+                <property>
+                    <name>mapred.job.queue.name</name>
+                    <value>${queueName}</value>
+                </property>
+            </configuration>
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>SampleSparkJob</name>
+            <class>com.example.MySparkProcessor</class>
+            <jar>${wfPath}/lib/my-spark-job.jar</jar>
+            <arg>${outputDir}/prep</arg>
+            <arg>${outputDir}/final</arg>
+            <spark-opts>--conf spark.driver.extraJavaOptions=-Dlog4j.configuration=log4j.properties</spark-opts>
+        </spark>
+        <ok to="end"/>
+        <error to="fail"/>
+    </action>
+
+    <kill name="fail">
+        <message>Workflow failed, error message[${wf:errorMessage(wf:lastErrorNode())}]</message>
+    </kill>
+    <end name="end"/>
+</workflow-app>

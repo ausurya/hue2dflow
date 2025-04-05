@@ -1,0 +1,232 @@
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="advanced-data-processing-wf">
+
+    <global>
+        <job-tracker>${jobTracker}</job-tracker>
+        <name-node>${nameNode}</name-node>
+        <configuration>
+            <property>
+                <name>mapred.job.queue.name</name>
+                <value>${queueName}</value>
+            </property>
+        </configuration>
+    </global>
+
+    <parameters>
+        <property>
+            <name>inputPath</name>
+            <value>/data/input</value>
+        </property>
+        <property>
+            <name>outputPath</name>
+            <value>/data/output</value>
+        </property>
+        <property>
+            <name>processingMode</name>
+            <value>standard</value>
+        </property>
+    </parameters>
+
+    <start to="data-validation"/>
+
+    <!-- Initial data validation -->
+    <action name="data-validation">
+        <java>
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <main-class>com.example.DataValidator</main-class>
+            <arg>${inputPath}</arg>
+            <arg>${outputPath}/validation</arg>
+            <capture-output/>
+        </java>
+        <ok to="check-validation-result"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Decision node to check validation results -->
+    <decision name="check-validation-result">
+        <switch>
+            <case to="data-preparation">${wf:actionData('data-validation')['status'] eq 'VALID'}</case>
+            <case to="data-cleansing">${wf:actionData('data-validation')['status'] eq 'INVALID'}</case>
+            <default to="send-error-email"/>
+        </switch>
+    </decision>
+
+    <!-- Data preparation for valid data -->
+    <action name="data-preparation">
+        <shell xmlns="uri:oozie:shell-action:0.3">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>prepare_data.sh</exec>
+            <argument>${inputPath}</argument>
+            <argument>${outputPath}/prepared</argument>
+            <file>${appPath}/scripts/prepare_data.sh#prepare_data.sh</file>
+            <capture-output/>
+        </shell>
+        <ok to="check-processing-mode"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Data cleansing for invalid data -->
+    <action name="data-cleansing">
+        <spark xmlns="uri:oozie:spark-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>DataCleansing</name>
+            <class>com.example.DataCleaner</class>
+            <jar>${appPath}/lib/data-cleaner.jar</jar>
+            <spark-opts>--conf spark.executor.memory=4g</spark-opts>
+            <arg>${inputPath}</arg>
+            <arg>${outputPath}/cleansed</arg>
+        </spark>
+        <ok to="check-processing-mode"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Decision node to check processing mode -->
+    <decision name="check-processing-mode">
+        <switch>
+            <case to="parallel-processing">${processingMode eq 'standard'}</case>
+            <case to="sequential-processing">${processingMode eq 'safe'}</case>
+            <default to="send-error-email"/>
+        </switch>
+    </decision>
+
+    <!-- Fork for parallel processing -->
+    <fork name="parallel-processing">
+        <path start="feature-extraction"/>
+        <path start="metadata-generation"/>
+        <path start="data-profiling"/>
+    </fork>
+
+    <!-- Feature extraction task -->
+    <action name="feature-extraction">
+        <spark xmlns="uri:oozie:spark-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>FeatureExtraction</name>
+            <class>com.example.FeatureExtractor</class>
+            <jar>${appPath}/lib/feature-extractor.jar</jar>
+            <arg>${outputPath}/prepared</arg>
+            <arg>${outputPath}/features</arg>
+        </spark>
+        <ok to="parallel-join"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Metadata generation task -->
+    <action name="metadata-generation">
+        <shell xmlns="uri:oozie:shell-action:0.3">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <exec>generate_metadata.sh</exec>
+            <argument>${outputPath}/prepared</argument>
+            <argument>${outputPath}/metadata</argument>
+            <file>${appPath}/scripts/generate_metadata.sh#generate_metadata.sh</file>
+        </shell>
+        <ok to="parallel-join"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Data profiling task -->
+    <action name="data-profiling">
+        <hive xmlns="uri:oozie:hive-action:0.5">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <script>${appPath}/scripts/profile_data.hql</script>
+            <param>INPUT=${outputPath}/prepared</param>
+            <param>OUTPUT=${outputPath}/profile</param>
+        </hive>
+        <ok to="parallel-join"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Join for parallel processing -->
+    <join name="parallel-join" to="check-results"/>
+
+    <!-- Sequential processing path -->
+    <action name="sequential-processing">
+        <sub-workflow>
+            <app-path>${appPath}/sequential-workflow.xml</app-path>
+            <propagate-configuration/>
+            <configuration>
+                <property>
+                    <name>inputPath</name>
+                    <value>${outputPath}/prepared</value>
+                </property>
+                <property>
+                    <name>outputPath</name>
+                    <value>${outputPath}/sequential</value>
+                </property>
+            </configuration>
+        </sub-workflow>
+        <ok to="check-results"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Decision node to check processing results -->
+    <decision name="check-results">
+        <switch>
+            <case to="final-processing">${fs:fileSize(wf:conf('outputPath') += '/features') gt 0 or fs:fileSize(wf:conf('outputPath') += '/sequential') gt 0}</case>
+            <default to="send-error-email"/>
+        </switch>
+    </decision>
+
+    <!-- Final processing step -->
+    <action name="final-processing">
+        <spark xmlns="uri:oozie:spark-action:0.2">
+            <job-tracker>${jobTracker}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <master>yarn</master>
+            <mode>cluster</mode>
+            <name>FinalProcessing</name>
+            <class>com.example.FinalProcessor</class>
+            <jar>${appPath}/lib/final-processor.jar</jar>
+            <arg>${outputPath}</arg>
+            <arg>${outputPath}/final</arg>
+        </spark>
+        <ok to="send-success-email"/>
+        <error to="send-error-email"/>
+    </action>
+
+    <!-- Success notification -->
+    <action name="send-success-email">
+        <email xmlns="uri:oozie:email-action:0.2">
+            <to>${wf:conf('successEmail')}</to>
+            <subject>Workflow ${wf:name()} completed successfully</subject>
+            <body>
+                The workflow ${wf:name()} completed successfully.
+                Input: ${inputPath}
+                Output: ${outputPath}/final
+            </body>
+        </email>
+        <ok to="end"/>
+        <error to="end"/>
+    </action>
+
+    <!-- Error notification -->
+    <action name="send-error-email">
+        <email xmlns="uri:oozie:email-action:0.2">
+            <to>${wf:conf('errorEmail')}</to>
+            <subject>Workflow ${wf:name()} failed</subject>
+            <body>
+                The workflow ${wf:name()} failed at node ${wf:lastErrorNode()}.
+                Error message: ${wf:errorMessage(wf:lastErrorNode())}
+            </body>
+        </email>
+        <ok to="kill"/>
+        <error to="kill"/>
+    </action>
+
+    <!-- Kill node -->
+    <kill name="kill">
+        <message>Workflow failed: ${wf:errorMessage(wf:lastErrorNode())}</message>
+    </kill>
+
+    <!-- End node -->
+    <end name="end"/>
+
+</workflow-app>

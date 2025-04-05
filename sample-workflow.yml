@@ -1,0 +1,54 @@
+name: sample-java-wf
+tasks:
+  - task_key: Start
+    description: Initial workflow task
+    notebook_task:
+      notebook_path: "/Workflows/Start"
+      base_parameters: {}
+    job_cluster_key: default_cluster
+
+  - task_key: shell-prep
+    description: Shell script preparation task
+    notebook_task:
+      notebook_path: "/Workflows/shell-prep"
+      base_parameters: {}
+    depends_on:
+      - task_key: Start
+    job_cluster_key: default_cluster
+
+  - task_key: spark-process
+    description: Spark data processing task
+    notebook_task:
+      notebook_path: "/Workflows/spark-process"
+      base_parameters: {}
+    depends_on:
+      - task_key: shell-prep
+    job_cluster_key: default_cluster
+
+  - task_key: fail
+    description: Task to handle failures
+    notebook_task:
+      notebook_path: "/Workflows/fail"
+      base_parameters: {}
+    depends_on:
+      - task_key: shell-prep
+        outcome: FAILED
+      - task_key: spark-process
+        outcome: FAILED
+    job_cluster_key: default_cluster
+
+  - task_key: end
+    description: Final workflow task
+    notebook_task:
+      notebook_path: "/Workflows/end"
+      base_parameters: {}
+    depends_on:
+      - task_key: spark-process
+    job_cluster_key: default_cluster
+
+job_clusters:
+  - job_cluster_key: default_cluster
+    new_cluster:
+      spark_version: 13.3.x-scala2.12
+      node_type_id: i3.xlarge
+      num_workers: 2
