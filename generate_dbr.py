@@ -1,4 +1,3 @@
-import argparse
 import logging
 import os
 import time
@@ -261,62 +260,50 @@ def save_output(content: str, output_path: str) -> None:
         logging.error(f"Error saving output to {output_path}: {e}")
         raise
 
-# --- Main Execution ---
-def main():
-    """Main execution flow."""
-    # --- Argument Parsing ---
-    parser = argparse.ArgumentParser(description='Convert Oozie XML workflow to Databricks YAML.')
-    parser.add_argument('input_xml', help='Path to the input Oozie XML file.')
-    parser.add_argument('-o', '--output', help='Path to save the output Databricks YAML file.')
-    args = parser.parse_args()
-
-    # Validate Databricks configuration
-    if not DATABRICKS_TOKEN:
-        logging.error("DATABRICKS_TOKEN environment variable not set.")
-        print("Error: DATABRICKS_TOKEN environment variable not set.")
-        print("Please set the DATABRICKS_TOKEN environment variable to your Databricks API token.")
-        return
-
-    # Determine input/output paths
-    input_xml_path = args.input_xml
+def convert_oozie_to_databricks(input_xml_path, output_yaml_path=None):
+    """
+    Convert an Oozie XML workflow to Databricks YAML workflow.
     
-    # Verify the input file exists
-    if not os.path.exists(input_xml_path):
-        logging.error(f"Input XML file not found: {input_xml_path}")
-        print(f"Error: Input XML file not found: {input_xml_path}")
-        return
-
-    # Determine output file path
-    if args.output:
-        output_yaml_path = args.output
-    else:
-        # Generate output in the same directory as the input file
+    Parameters:
+    -----------
+    input_xml_path : str
+        Path to the input Oozie XML file
+    output_yaml_path : str, optional
+        Path to save the output Databricks YAML file. If None, will use the same name as input with .yml extension
+    
+    Returns:
+    --------
+    tuple
+        (yaml_content, validation_feedback) - The generated YAML content and validation feedback
+    """
+    # Determine output file path if not provided
+    if output_yaml_path is None:
         input_dir = os.path.dirname(input_xml_path)
         base_name = os.path.splitext(os.path.basename(input_xml_path))[0]
         output_yaml_path = os.path.join(input_dir, f"{base_name}.yml")
-
+    
+    # Validation log path
+    validation_log_path = os.path.splitext(output_yaml_path)[0] + "_validation.log"
+    
     logging.info(f"Starting conversion for: {input_xml_path}")
     logging.info(f"Output YAML will be saved to: {output_yaml_path}")
     logging.info(f"Logs will be saved to: {LOG_FILE}")
 
     final_yaml = ""
     validation_feedback = "Validation skipped due to errors in previous steps."
-    validation_log_path = os.path.splitext(output_yaml_path)[0] + "_validation.log"
 
     try:
-        # FR1.1, FR1.2: Read XML
+        # Read XML
         xml_content = read_xml_file(input_xml_path)
         logging.info(f"Successfully read XML file: {input_xml_path}")
 
-        # FR2.1: Step 1 - Summarize
+        # Step 1 - Summarize
         summary = generate_summary(xml_content)
-        # logging.info(f"Step 1 Summary:\n{summary}") # Logged via debug in call_llm
 
-        # FR2.2: Step 2 - Map Tasks
+        # Step 2 - Map Tasks
         task_list = map_tasks(summary)
-        # logging.info(f"Step 2 Task List:\n{task_list}")
 
-        # FR2.3: Step 3 - Build YAML (with retries)
+        # Step 3 - Build YAML (with retries)
         yaml_output = ""
         validation_feedback = "Initial run."
         last_yaml_output = ""
@@ -369,25 +356,47 @@ def main():
                 logging.info(f"Validation feedback seems positive on attempt {attempt + 1}. Stopping feedback loop early.")
                 break
 
-        # --- Step 5: Save Outputs ---
+        # Save Outputs
         logging.info(f"--- Feedback loop finished after {attempt + 1} attempts. Saving final results. ---")
         save_output(last_yaml_output, output_yaml_path)
         logging.info(f"Successfully saved final YAML output to {output_yaml_path}")
 
         save_output(validation_feedback, validation_log_path)
         logging.info(f"Validation feedback saved to {validation_log_path}")
+        
+        return last_yaml_output, validation_feedback
 
     except Exception as e:
         logging.error(f"An critical error occurred during the conversion process: {e}", exc_info=True)
-        print(f"Conversion failed critically. Check {LOG_FILE} for details.")
-        # Exit with a non-zero status code to indicate failure
-        exit(1)
+        return None, f"Conversion failed: {str(e)}"
     finally:
         logging.info("Conversion process completed.")
-        print(f"\nConversion finished.")
-        print(f"Output YAML location: {output_yaml_path}")
-        print(f"Validation feedback: {validation_log_path}")
-        print(f"Detailed logs: {LOG_FILE}")
+
+# For Databricks notebook usage
+def main():
+    """
+    Example usage in a Databricks notebook:
+    
+    ```python
+    # Set these variables in your notebook
+    input_xml_path = "/dbfs/path/to/your/workflow.xml"
+    output_yaml_path = "/dbfs/path/to/your/output.yml"
+    
+    # Run the conversion
+    yaml_content, validation_feedback = convert_oozie_to_databricks(input_xml_path, output_yaml_path)
+    
+    # Display results
+    print(f"Conversion completed. Output saved to: {output_yaml_path}")
+    print("\nValidation Feedback:")
+    print(validation_feedback)
+    ```
+    """
+    # This is just a placeholder for when the script is run directly
+    # In Databricks, you would call convert_oozie_to_databricks() directly
+    print("This script is designed to be imported and used in a Databricks notebook.")
+    print("Example usage:")
+    print("  from generate_dbr import convert_oozie_to_databricks")
+    print("  yaml_content, validation_feedback = convert_oozie_to_databricks(input_xml_path, output_yaml_path)")
 
 if __name__ == "__main__":
     main()
